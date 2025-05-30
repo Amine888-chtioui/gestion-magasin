@@ -35,8 +35,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // === DASHBOARD ===
     Route::prefix('dashboard')->group(function () {
         Route::get('/', [DashboardController::class, 'index']);
-        Route::get('/statistiques', [DashboardController::class, 'getStatistiquesGenerales']);
-        Route::get('/alertes', [DashboardController::class, 'getAlertes']);
+        Route::get('/statistiques-rapides', [DashboardController::class, 'statistiquesRapides']);
+        Route::get('/alertes-importantes', [DashboardController::class, 'alertesImportantes']);
         Route::get('/activites', [DashboardController::class, 'getActivitesRecentes']);
         Route::get('/evolution', [DashboardController::class, 'getGraphiqueEvolution']);
         Route::get('/resume', [DashboardController::class, 'getResume']);

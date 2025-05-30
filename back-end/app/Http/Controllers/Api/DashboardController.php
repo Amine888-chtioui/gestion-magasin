@@ -375,7 +375,237 @@ class DashboardController extends Controller
         return $resume;
     }
 
-    // Endpoints spécifiques
+    // Endpoints spécifiques supplémentaires
+    public function getStatistiquesGenerales()
+    {
+        try {
+            $user = request()->user();
+
+            if ($user->isAdmin()) {
+                $stats = [
+                    'machines' => [
+                        'total' => Machine::count(),
+                        'actives' => Machine::where('statut', 'actif')->count(),
+                        'en_maintenance' => Machine::where('statut', 'maintenance')->count(),
+                        'inactives' => Machine::where('statut', 'inactif')->count(),
+                    ],
+                    'composants' => [
+                        'total' => Composant::count(),
+                        'bon' => Composant::where('statut', 'bon')->count(),
+                        'usure' => Composant::where('statut', 'usure')->count(),
+                        'defaillant' => Composant::where('statut', 'defaillant')->count(),
+                    ],
+                    'demandes' => [
+                        'total' => Demande::count(),
+                        'en_attente' => Demande::where('statut', 'en_attente')->count(),
+                        'urgentes' => Demande::whereIn('priorite', ['haute', 'critique'])->count(),
+                    ],
+                ];
+            } else {
+                $stats = [
+                    'mes_demandes' => [
+                        'total' => $user->demandes()->count(),
+                        'en_attente' => $user->demandes()->where('statut', 'en_attente')->count(),
+                    ],
+                    'machines_actives' => Machine::where('statut', 'actif')->count(),
+                ];
+            }
+
+            return response()->json([
+                'message' => 'Statistiques générales récupérées avec succès',
+                'data' => $stats
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Erreur lors de la récupération des statistiques',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getAlertes()
+    {
+        try {
+            $user = request()->user();
+
+            if (!$user->isAdmin()) {
+                return response()->json([
+                    'message' => 'Action non autorisée'
+                ], 403);
+            }
+
+            $alertes = [
+                'composants_defaillants' => Composant::where('statut', 'defaillant')->count(),
+                'machines_maintenance' => Machine::where('statut', 'maintenance')->count(),
+                'demandes_urgentes' => Demande::whereIn('priorite', ['haute', 'critique'])
+                    ->where('statut', 'en_attente')->count(),
+                'composants_a_inspecter' => Composant::where('prochaine_inspection', '<=', now()->addDays(7))->count(),
+            ];
+
+            return response()->json([
+                'message' => 'Alertes récupérées avec succès',
+                'data' => $alertes
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Erreur lors de la récupération des alertes',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getActivitesRecentes()
+    {
+        try {
+            $user = request()->user();
+
+            if ($user->isAdmin()) {
+                $activites = [
+                    'demandes_recentes' => Demande::with(['user', 'machine'])
+                        ->orderBy('created_at', 'desc')
+                        ->take(10)
+                        ->get(),
+                    'machines_modifiees' => Machine::orderBy('updated_at', 'desc')
+                        ->take(5)
+                        ->get(['id', 'nom', 'statut', 'updated_at']),
+                    'composants_modifies' => Composant::with(['machine'])
+                        ->orderBy('updated_at', 'desc')
+                        ->take(5)
+                        ->get(['id', 'nom', 'statut', 'machine_id', 'updated_at']),
+                ];
+            } else {
+                $activites = [
+                    'mes_demandes_recentes' => $user->demandes()
+                        ->with(['machine'])
+                        ->orderBy('created_at', 'desc')
+                        ->take(5)
+                        ->get(),
+                ];
+            }
+
+            return response()->json([
+                'message' => 'Activités récentes récupérées avec succès',
+                'data' => $activites
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Erreur lors de la récupération des activités',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getGraphiqueEvolution()
+    {
+        try {
+            $user = request()->user();
+
+            if (!$user->isAdmin()) {
+                return response()->json([
+                    'message' => 'Action non autorisée'
+                ], 403);
+            }
+
+            $evolution = [
+                'demandes_par_mois' => $this->getDemandesParMois(),
+                'machines_par_statut' => $this->getMachinesParStatut(),
+                'composants_par_statut' => $this->getComposantsParStatut(),
+                'evolution_maintenance' => $this->getEvolutionMaintenance(),
+            ];
+
+            return response()->json([
+                'message' => 'Graphiques d\'évolution récupérés avec succès',
+                'data' => $evolution
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Erreur lors de la récupération des graphiques',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getResume()
+    {
+        try {
+            $user = request()->user();
+            $resume = [];
+
+            if ($user->isAdmin()) {
+                $demandesEnAttente = Demande::where('statut', 'en_attente')->count();
+                $composantsDefaillants = Composant::where('statut', 'defaillant')->count();
+                $machinesMaintenance = Machine::where('statut', 'maintenance')->count();
+                
+                if ($demandesEnAttente > 0) {
+                    $resume[] = [
+                        'type' => 'warning',
+                        'message' => "$demandesEnAttente demande(s) en attente de traitement",
+                        'action' => 'Consulter les demandes'
+                    ];
+                }
+                
+                if ($composantsDefaillants > 0) {
+                    $resume[] = [
+                        'type' => 'error',
+                        'message' => "$composantsDefaillants composant(s) défaillant(s)",
+                        'action' => 'Vérifier les composants'
+                    ];
+                }
+
+                if ($machinesMaintenance > 0) {
+                    $resume[] = [
+                        'type' => 'info',
+                        'message' => "$machinesMaintenance machine(s) en maintenance",
+                        'action' => 'Suivre les maintenances'
+                    ];
+                }
+            } else {
+                $mesDemandesEnAttente = $user->demandes()->where('statut', 'en_attente')->count();
+                $mesDemandesTotal = $user->demandes()->count();
+                
+                if ($mesDemandesEnAttente > 0) {
+                    $resume[] = [
+                        'type' => 'info',
+                        'message' => "Vous avez $mesDemandesEnAttente demande(s) en attente",
+                        'action' => 'Suivre vos demandes'
+                    ];
+                }
+
+                if ($mesDemandesTotal === 0) {
+                    $resume[] = [
+                        'type' => 'info',
+                        'message' => "Vous n'avez pas encore soumis de demandes",
+                        'action' => 'Créer une demande'
+                    ];
+                }
+            }
+
+            if (empty($resume)) {
+                $resume[] = [
+                    'type' => 'success',
+                    'message' => 'Tout fonctionne normalement !',
+                    'action' => null
+                ];
+            }
+
+            return response()->json([
+                'message' => 'Résumé récupéré avec succès',
+                'data' => $resume
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Erreur lors de la récupération du résumé',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // Endpoints rapides
     public function statistiquesRapides()
     {
         try {
